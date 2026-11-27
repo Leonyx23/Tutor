@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { wrapText, normalizeElement, bboxOf, avoidOverlap, describeBoard, W, H } from '../js/layout.js';
+import { wrapText, normalizeElement, bboxOf, describeBoard, W, H } from '../js/layout.js';
 
 test('Tafel ist 800 × 600 Einheiten groß', () => {
   assert.equal(W, 800); assert.equal(H, 600);
@@ -9,7 +9,7 @@ test('Tafel ist 800 × 600 Einheiten groß', () => {
 test('wrapText bricht an Wortgrenzen, wenn die Zeile zu breit wird', () => {
   const lines = wrapText('Musculus biceps brachii beugt den Ellenbogen', 28, 300);
   assert.ok(lines.length >= 2);
-  for (const l of lines) assert.ok(l.length * 28 * 0.55 <= 300 || !l.includes(' '));
+  for (const l of lines) assert.ok(l.length * 28 * 0.55 <= 300);
   assert.equal(lines.join(' '), 'Musculus biceps brachii beugt den Ellenbogen');
 });
 
@@ -58,20 +58,6 @@ test('bboxOf schätzt die Fläche eines mittig gesetzten Textes', () => {
 
 test('bboxOf eines Kreises', () => {
   assert.deepEqual(bboxOf({ k: 'circle', x: 100, y: 100, r: 20 }), { x: 80, y: 80, w: 40, h: 40 });
-});
-
-test('avoidOverlap schiebt Text nach unten, wenn er auf anderem Text liegt', () => {
-  const old = [{ x: 40, y: 60, w: 300, h: 40 }];
-  const el = { k: 'text', x: 40, y: 90, s: 'Überlappt', size: 28 };
-  const moved = avoidOverlap(el, old);
-  assert.ok(moved.y > 90);
-  const b = bboxOf(moved);
-  assert.ok(b.y >= 100 - 1);
-});
-
-test('avoidOverlap lässt Text in Ruhe, der frei steht', () => {
-  const el = { k: 'text', x: 40, y: 300, s: 'frei', size: 28 };
-  assert.equal(avoidOverlap(el, [{ x: 40, y: 60, w: 300, h: 40 }]).y, 300);
 });
 
 test('describeBoard nennt ids, Art, Text und Fläche', () => {

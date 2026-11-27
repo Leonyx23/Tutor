@@ -1,5 +1,6 @@
 // Die Tafel: SVG 800 × 600, mehrere Seiten, Elemente werden "von Hand" gezeichnet.
-import { W, H, normalizeElement, avoidOverlap, bboxOf, isTexty, textLines, describeBoard, CHAR } from './layout.js';
+import { W, H, normalizeElement, bboxOf, textLines, describeBoard, CHAR, setMeasure, boxLines, tableLayout } from './layout.js';
+import { planStep, fitBox, fitTable, fitText } from './place.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const mk = (tag, attrs = {}, parent) => {
@@ -99,6 +100,25 @@ export class Board {
     mk('rect', { x: 0, y: 0, width: W, height: H, class: 'paper' }, this.svg);
     mk('rect', { x: 0, y: 0, width: W, height: H, fill: 'url(#kaestchen)', class: 'grid' }, this.svg);
     this.layer = mk('g', {}, this.svg);
+    // Unsichtbarer Text zum Messen der echten Textbreite (Handschrift ist schmaler als geschätzt)
+    const mg = mk('g', { class: 'el measure', 'aria-hidden': 'true' }, this.svg);
+    mg.style.visibility = 'hidden';
+    this.mtext = mk('text', { class: 't', x: -2000, y: -2000 }, mg);
+    const cache = new Map();
+    setMeasure((str, size, bold) => {
+      const k = (bold ? 'b' : '') + size + '|' + str;
+      if (cache.has(k)) return cache.get(k);
+      this.mtext.setAttribute('font-size', size);
+      this.mtext.classList.toggle('b', !!bold);
+      this.mtext.textContent = str;
+      let w = NaN;
+      try { w = this.mtext.getComputedTextLength(); } catch { /* nicht sichtbar */ }
+      if (!(w > 0)) return NaN;
+      w *= 1.04;
+      cache.set(k, w);
+      return w;
+    });
+    if (document.fonts) document.fonts.addEventListener?.('loadingdone', () => cache.clear());
     this.clipN = 0;
     this.n = 0;
     this.reset();
@@ -146,24 +166,37 @@ export class Board {
   nextId() { return 'e' + (++this.n); }
 
   // Zeichnet rohe Elemente (vom Modell) nacheinander. Gibt die geprüften Elemente zurück.
-  async draw(raw, { animate = true } = {}) {
+  // plan: Text so anordnen, dass nichts übereinander oder über den Rand geschrieben wird (sonst nur einpassen).
+  async draw(raw, { animate = true, plan = true } = {}) {
     this.skipping = false;
-    const out = [];
+    const els = [];
     for (const r of raw || []) {
-      const el0 = normalizeElement(r, () => this.nextId());
-      if (!el0) continue;
+      const el = normalizeElement(r, () => this.nextId());
+      if (!el) continue;
+      if (el.k === 'erase') { this.erase(el.ids); continue; }
       const pg = this.page;
-      if (el0.k === 'erase') { this.erase(el0.ids); continue; }
-      // gleiche id auf dieser Seite: das alte Element bekommt eine neue id
-      if (pg.nodes.has(el0.id)) {
-        const old = pg.els.find((e) => e.id === el0.id);
+      // gleiche id auf dieser Seite oder in diesem Schritt: das ältere Element bekommt eine neue id
+      if (pg.nodes.has(el.id)) {
+        const old = pg.els.find((e) => e.id === el.id);
         const nid = this.nextId();
         if (old) old.id = nid;
-        pg.nodes.set(nid, pg.nodes.get(el0.id));
-        pg.nodes.delete(el0.id);
+        pg.nodes.set(nid, pg.nodes.get(el.id));
+        pg.nodes.delete(el.id);
       }
-      const boxes = pg.els.filter(isTexty).map(bboxOf).filter(Boolean);
-      let el = avoidOverlap(el0, boxes);
+      const dup = els.find((e) => e.id === el.id);
+      if (dup) dup.id = this.nextId();
+      els.push(el);
+    }
+    let list;
+    if (plan) {
+      const r = planStep(els, this.page.els);
+      if (r.newPage && !this.isEmpty()) this.newPage();
+      list = r.els;
+    } else {
+      list = els.map((e) => (e.k === 'box' ? fitBox(e) : e.k === 'table' ? fitTable(e) : e.k === 'text' || e.k === 'label' ? fitText(e) : e));
+    }
+    const out = [];
+    for (let el of list) {
       if (el.k === 'ring' || el.k === 'under') {
         el = this.resolveRef(el);
         if (!el) continue;
@@ -263,9 +296,8 @@ export class Board {
         if (el.fill) fill(`M${el.x} ${el.y}h${el.w}v${el.h}h${-el.w}Z`);
         stroke(rectPath(el.x, el.y, el.w, el.h, rnd), 2.6);
         if (el.s) {
-          let size = el.size;
-          let lines = textLines({ k: 'text', s: el.s, size, w: el.w - 14, x: 0, a: 'start' });
-          while (size > 14 && lines.length * size * 1.2 > el.h - 8) { size -= 2; lines = textLines({ k: 'text', s: el.s, size, w: el.w - 14, x: 0, a: 'start' }); }
+          const size = el.size;
+          const lines = boxLines(el);
           const top = el.y + el.h / 2 - (lines.length * size * 1.2) / 2 + size * 0.88;
           lines.forEach((line, i) => text(el.x + el.w / 2, top + i * size * 1.2, line, size, 'middle'));
         }
@@ -273,7 +305,7 @@ export class Board {
       }
       case 'circle': {
         if (el.fill) fill(ellipsePath(el.x, el.y, el.rx, el.ry, rng(el.id), 0));
-        stroke(ellipsePath(el.x, el.y, el.rx, el.ry, rnd, 0.04));
+        stroke(ellipsePath(el.x, el.y, el.rx, el.ry, rnd, 0));
         break;
       }
       case 'curve': case 'poly': {
@@ -300,25 +332,21 @@ export class Board {
         break;
       }
       case 'table': {
-        const size = el.size, pad = 8, lh = size * 1.2;
-        const rows = [...(el.cols.length ? [el.cols] : []), ...el.rows];
+        const t = tableLayout(el);
+        const size = el.size;
         let y = el.y;
-        const total = el.cw.reduce((a, b) => a + b, 0);
         const rowYs = [y];
-        rows.forEach((row, ri) => {
-          const cells = el.cw.map((w, ci) => textLines({ k: 'text', s: row[ci] || '', size, w: w - 2 * pad, x: 0, a: 'start' }));
-          const rh = Math.max(1, ...cells.map((c) => c.length)) * lh + size * 0.7;
+        t.cells.forEach((cells, ri) => {
           let x = el.x;
           cells.forEach((lines, ci) => {
-            lines.forEach((line, li) => line && text(x + pad, y + size * 0.95 + pad * 0.5 + li * lh, line, size, 'start', ri === 0 && el.cols.length ? 'b' : ''));
+            lines.forEach((line, li) => line && text(x + t.pad, y + size * 0.95 + t.pad * 0.5 + li * t.lh, line, size, 'start', ri === 0 && el.cols.length ? 'b' : ''));
             x += el.cw[ci];
           });
-          y += rh; rowYs.push(y);
+          y += t.heights[ri]; rowYs.push(y);
         });
-        rowYs.forEach((yy, i) => stroke(wobble(el.x, yy, el.x + total, yy, rnd, 0.4), i === 1 && el.cols.length ? 2.6 : 1.6));
+        rowYs.forEach((yy, i) => stroke(wobble(el.x, yy, el.x + t.width, yy, rnd, 0.4), i === 1 && el.cols.length ? 2.6 : 1.6));
         let x = el.x;
         for (let i = 0; i <= el.cw.length; i++) { stroke(wobble(x, el.y, x, y, rnd, 0.4), 1.6); x += el.cw[i] || 0; }
-        el.h = y - el.y;
         break;
       }
       case 'mark': {

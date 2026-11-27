@@ -108,10 +108,11 @@ function addMe(text, files = []) {
 }
 function addTutor(text, page) {
   const li = h('li', 'msg tutor');
+  li.dataset.page = page;
   const b = h('button', '', text);
   b.type = 'button';
   b.title = 'Zu dieser Tafelseite';
-  b.onclick = () => board.showPage(page);
+  b.onclick = () => board.showPage(Number(li.dataset.page));
   li.appendChild(b);
   return addItem(li);
 }
@@ -321,8 +322,9 @@ class Session {
     this.lastSay = ev.say || this.lastSay;
     const li = ev.say ? addTutor(ev.say, board.cur) : null;
     if (li) li.classList.add('now');
-    const [, els] = await Promise.all([speaker.speak(ev.say), board.draw(ev.draw, { animate: !reduced })]);
-    if (li) li.classList.remove('now');
+    const [, els] = await Promise.all([speaker.speak(ev.say), board.draw(ev.draw, { animate: !reduced, plan: !ev.replay })]);
+    if (li) { li.classList.remove('now'); li.dataset.page = board.cur; }
+    if (ev.src === 'main') this.mainPage = board.cur; else this.insPage = board.cur;
     if (!ev.replay) {
       this.l.script.push({ type: ev.type, say: ev.say, page: board.cur, els, src: ev.src });
       if (ev.say) this.l.turns.push({ who: 'tutor', text: ev.say, page: board.cur });

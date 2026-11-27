@@ -171,20 +171,59 @@ export function normalizeElement(raw, nextId) {
   return null;
 }
 
-export function wrapText(s, size, maxW) {
-  const perLine = Math.max(4, Math.floor(maxW / (size * CHAR)));
+// Textbreite: im Browser echt gemessen (setMeasure), sonst über die Zeichenzahl geschätzt
+let measureFn = null;
+export function setMeasure(fn) { measureFn = fn; }
+export function textWidth(s, size, bold = false) {
+  if (!s) return 0;
+  if (measureFn) { const w = measureFn(s, size, bold); if (Number.isFinite(w) && w > 0) return w; }
+  return s.length * size * CHAR * (bold ? 1.06 : 1);
+}
+
+// Zu lange Wörter trennen (bevorzugt nach Fugen-s oder vor einem Bindestrich)
+function breakWord(word, size, maxW, bold) {
+  const parts = [];
+  let rest = word;
+  while (rest && textWidth(rest, size, bold) > maxW && rest.length > 3) {
+    let k = rest.length - 1;
+    while (k > 2 && textWidth(rest.slice(0, k) + '-', size, bold) > maxW) k--;
+    let cut = k;
+    // Fuge suchen: nach Bindestrich oder Fugen-s, aber nicht zu weit vorn (mind. 40 % der möglichen Länge)
+    for (let j = k; j >= Math.max(3, Math.floor(k * 0.4)); j--) {
+      if (rest[j - 1] === '-' || (rest[j - 1] === 's' && j < rest.length - 2 && /[a-zäöüß]/.test(rest[j] || ''))) { cut = j; break; }
+    }
+    const head = rest.slice(0, cut);
+    parts.push(head.endsWith('-') ? head : head + '-');
+    rest = rest.slice(cut);
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+export function wrapText(s, size, maxW, bold = false) {
   const out = [];
   for (const para of String(s).split('\n')) {
-    const words = para.split(/\s+/).filter(Boolean);
+    const words = para.split(/\s+/).filter(Boolean).flatMap((w) => (textWidth(w, size, bold) > maxW ? breakWord(w, size, maxW, bold) : [w]));
     let line = '';
     for (const w of words) {
       if (!line) line = w;
-      else if ((line + ' ' + w).length <= perLine) line += ' ' + w;
+      else if (textWidth(line + ' ' + w, size, bold) <= maxW) line += ' ' + w;
       else { out.push(line); line = w; }
     }
     out.push(line);
   }
   return out;
+}
+
+export const boxLines = (el) => wrapText(el.s || '', el.size, el.w - 14, false);
+
+// Tabelle: Zeilenumbruch je Zelle und Zeilenhöhen (gleich für Zeichnen und Platzberechnung)
+export function tableLayout(el) {
+  const pad = 8, lh = el.size * 1.2;
+  const rows = [...(el.cols.length ? [el.cols] : []), ...el.rows];
+  const cells = rows.map((row, ri) => el.cw.map((w, ci) => wrapText(row[ci] || '', el.size, w - 2 * pad, ri === 0 && el.cols.length > 0)));
+  const heights = cells.map((r) => Math.max(1, ...r.map((c) => c.length)) * lh + el.size * 0.7);
+  return { rows, cells, heights, pad, lh, height: heights.reduce((a, b) => a + b, 0), width: el.cw.reduce((a, b) => a + b, 0) };
 }
 
 export function textMaxWidth(el) {
@@ -194,12 +233,12 @@ export function textMaxWidth(el) {
 }
 
 export function textLines(el) {
-  return wrapText(el.s, el.size, textMaxWidth(el));
+  return wrapText(el.s, el.size, textMaxWidth(el), el.bold);
 }
 
-function textBox(el) {
+export function textBox(el) {
   const lines = textLines(el);
-  const w = Math.max(...lines.map((l) => l.length)) * el.size * CHAR;
+  const w = Math.max(...lines.map((l) => textWidth(l, el.size, el.bold)));
   const h = lines.length * el.size * 1.2;
   const x = el.a === 'middle' ? el.x - w / 2 : el.a === 'end' ? el.x - w : el.x;
   return { x, y: el.y - el.size * 0.85, w, h };
@@ -235,39 +274,13 @@ export function bboxOf(el) {
       return pts.length ? ptsBox(pts) : { x: 0, y: 0, w: 0, h: 0 };
     }
     case 'table': {
-      const w = el.cw.reduce((a, b) => a + b, 0);
-      const h = (el.rows.length + (el.cols.length ? 1 : 0)) * el.size * 1.7;
-      return { x: el.x, y: el.y, w, h };
+      const t = tableLayout(el);
+      return { x: el.x, y: el.y, w: t.width, h: t.height };
     }
     default:
       if (Number.isFinite(el.x) && Number.isFinite(el.w)) return { x: el.x, y: el.y, w: el.w, h: el.h };
       return null;
   }
-}
-
-function overlap(a, b) {
-  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-  return w > 0 && h > 0 ? w * h : 0;
-}
-
-const TEXTY = new Set(['text', 'box', 'table']);
-export const isTexty = (el) => TEXTY.has(el.k);
-
-// Schiebt Text, Kästen und Tabellen nach unten, wenn sie deutlich auf anderem Text liegen.
-export function avoidOverlap(el, boxes) {
-  if (!isTexty(el) || !boxes.length) return el;
-  const b0 = bboxOf(el);
-  if (!b0 || b0.w <= 0 || b0.h <= 0) return el;
-  const area = b0.w * b0.h;
-  const hits = (b, f) => boxes.some((o) => overlap(b, o) > area * f);
-  if (!hits(b0, 0.3)) return el;
-  const step = 10;
-  for (let dy = step; b0.y + dy + b0.h <= H - 6; dy += step) {
-    const b = { ...b0, y: b0.y + dy };
-    if (!hits(b, 0.02)) return { ...el, y: el.y + dy };
-  }
-  return el;
 }
 
 export function describeBoard(elements) {

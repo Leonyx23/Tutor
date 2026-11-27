@@ -1,10 +1,10 @@
 // Service Worker: App offline verfügbar, Updates kommen beim nächsten Öffnen mit Netz.
 // Löscht nur eigene Caches (Präfix "tutor-"), weil andere Apps auf derselben Domain liegen.
-const CACHE = 'tutor-v1';
+const CACHE = 'tutor-v2';
 const FONTS = 'tutor-fonts-v1';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
-  'js/app.js', 'js/board.js', 'js/layout.js', 'js/prompt.js', 'js/providers.js', 'js/speech.js', 'js/store.js', 'js/stream.js',
+  'js/app.js', 'js/board.js', 'js/layout.js', 'js/place.js', 'js/prompt.js', 'js/providers.js', 'js/speech.js', 'js/store.js', 'js/stream.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

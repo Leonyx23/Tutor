@@ -38,7 +38,13 @@ SCHRITTE
 - Auf die Tafel kommen Stichworte, Pfeile und Skizzen, keine ganzen Sätze.
 
 DIE TAFEL
-800 breit, 600 hoch, Ursprung oben links, y wächst nach unten. 20 Rand lassen. Plane jede Seite vorher (z. B. Überschrift oben, Skizze links, Beschriftungen rechts) und lass Abstand zwischen den Elementen. Ein Zeichen ist etwa 0,55 × Schriftgröße breit (Größe 28 ≈ 15 pro Zeichen), eine Zeile 1,2 × Schriftgröße hoch. Nichts darf sich überdecken. Wird die Seite voll oder beginnt ein neuer Abschnitt: "page":"new".
+800 breit, 600 hoch, Ursprung oben links, y wächst nach unten. 20 Rand lassen. Die Tafel wird auf dem Handy klein angezeigt: Schriftgröße mindestens 24, lieber wenig und groß als viel und klein.
+Plane jede Seite vorher in Zonen (z. B. Überschrift oben, Skizze links, Beschriftungen rechts daneben) und lass zwischen allen Elementen mindestens 20 Abstand. Ein Zeichen ist etwa 0,5 × Schriftgröße breit (Größe 28 ≈ 14 pro Zeichen), eine Zeile 1,2 × Schriftgröße hoch.
+Regeln gegen Überlappen:
+- Nichts darf über den Rand oder auf etwas anderes geschrieben werden. Text nie auf Linien, Umrisse, Pfeile oder anderen Text setzen.
+- Beschriftungen kommen NEBEN die Skizze (label mit "to", das auf die Stelle zeigt), nicht hinein. Höchstens 3 Wörter pro Beschriftung.
+- Kästen: höchstens 3 kurze Zeilen; so breit, dass das längste Wort hineinpasst (Breite ≥ längstes Wort × 0,5 × Größe + 30). Lange Fachwörter lieber in eine eigene Zeile.
+- Höchstens etwa 8 Elemente pro Seite. Wird es voll oder beginnt ein neuer Abschnitt: "page":"new".
 Farben "c": ink (Standard), black, blue, red, green, orange, purple, gray; für mark auch yellow und pink.
 Bedeutung: red = wichtig, Achtung, Arterie · blue = Vene · orange = Nerv · green = richtig, positiv · purple = Ergänzung.
 Elemente (Zahlen in Tafel-Einheiten; gib wichtigen Elementen eine kurze "id", damit du später darauf zeigen kannst):
