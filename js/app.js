@@ -1,8 +1,8 @@
 import { Board } from './board.js';
-import { Router } from './providers.js';
+import { Router, TutorError, geminiUpload, needsUpload } from './providers.js';
 import { ObjectStream } from './stream.js';
 import { systemPrompt, toEvent, firstMessage, followUp, compose, LANGS } from './prompt.js';
-import { settings, routerStore, lessons } from './store.js';
+import { settings, routerStore, lessons, blobs } from './store.js';
 import { Speaker, Listener, voicesFor } from './speech.js';
 
 const $ = (id) => document.getElementById(id);
@@ -171,6 +171,38 @@ class Session {
     this.ctrls = new Set();
     this.wakeFn = null;
     this.afterShown = false;
+    this.blobCache = new Map();
+  }
+
+  // Große Dateien zu Google hochladen (beim ersten Mal und wenn sie nach 48 Stunden abgelaufen sind)
+  async prepareFiles(signal) {
+    const s = settings.get();
+    const files = this.l.first.files || [];
+    const todo = files.filter((f) => !f.gone && needsUpload(f, s.geminiKey));
+    if (!todo.length) return;
+    if (!s.geminiKey) throw new TutorError('needs_gemini', 'Für Fotos und PDFs braucht es Gemini');
+    for (const f of todo) {
+      const blob = this.blobCache.get(f.id) || await blobs.get(f.id).catch(() => null);
+      if (!blob) { f.gone = true; addSys(`${f.name} ist auf diesem Gerät nicht mehr gespeichert. Ich antworte ohne die Datei.`); continue; }
+      const li = h('li', 'msg sys progress');
+      const p = h('p', '', `Lade ${f.name} hoch …`);
+      const bar = h('div', 'bar'); const fill = h('span'); bar.appendChild(fill);
+      li.append(p, bar); addItem(li);
+      try {
+        const up = await geminiUpload({
+          key: s.geminiKey, blob, mime: f.mime, name: f.name, signal,
+          onProgress: (q) => { p.textContent = `Lade ${f.name} hoch … ${Math.round(q * 100)} %`; fill.style.width = (q * 100).toFixed(1) + '%'; },
+        });
+        delete f.data;
+        Object.assign(f, up);
+      } catch (e) {
+        const inlineMax = (f.mime === 'application/pdf' ? 50 : 100) * 1024 * 1024 * 0.74;
+        if ((e.code === 'upload_blocked' || e.code === 'upload_failed') && blob.size <= inlineMax) {
+          f.data = await blobToB64(blob); // Plan B: direkt in der Anfrage mitschicken
+        } else throw e;
+      } finally { li.remove(); }
+    }
+    this.saveSoon();
   }
 
   wake() { const f = this.wakeFn; this.wakeFn = null; if (f) f(); }
@@ -194,11 +226,17 @@ class Session {
   async request(follow, target, retryOf) {
     const s = settings.get();
     const router = new Router({ keys: { gemini: s.geminiKey, groq: s.groqKey }, store: routerStore });
-    const messages = compose(this.l.first, this.l.turns, follow);
     const ctrl = new AbortController();
     this.ctrls.add(ctrl);
     const flag = target === 'main' ? 'mainStreaming' : 'insStreaming';
     this[flag] = true;
+    try { await this.prepareFiles(ctrl.signal); } catch (e) {
+      this[flag] = false; this.ctrls.delete(ctrl);
+      if (e.code !== 'aborted') this.fail(e, follow, target);
+      this.wake(); this.run();
+      return;
+    }
+    const messages = compose(this.l.first, this.l.turns, follow);
     showThinking(true);
     const parser = new ObjectStream();
     let count = 0, raw = '';
@@ -358,6 +396,13 @@ class Session {
       return;
     }
     switch (e.code) {
+      case 'file_gone':
+        for (const f of this.l.first.files || []) if (f.uri) { delete f.uri; delete f.expires; }
+        if (!this.fileRetry) { this.fileRetry = true; this.request(follow, target).finally(() => { this.fileRetry = false; }); return; }
+        addSys('Google findet die hochgeladene Datei nicht mehr.', [['Nochmal hochladen', retry]]);
+        break;
+      case 'too_big': addSys('Die Datei ist für Google zu groß.'); break;
+      case 'upload_failed': case 'upload_blocked': addSys(`Das Hochladen hat nicht geklappt${e.message ? ': ' + e.message : '.'}`, [['Nochmal versuchen', retry]]); break;
       case 'no_key': addSys('Es ist noch kein Schlüssel eingetragen.', [['Einrichten', () => openSetup()]]); break;
       case 'bad_key': addSys(`Der ${e.provider === 'groq' ? 'Groq' : 'Gemini'}-Schlüssel wird abgelehnt. Prüf ihn in den Einstellungen.`, [['Einstellungen', () => openSettings()], ['Nochmal versuchen', retry]]); break;
       case 'needs_gemini': addSys('Fotos und PDFs kann nur Gemini lesen, und Gemini antwortet gerade nicht. Versuch es später nochmal oder schreib die Aufgabe ab.', [['Nochmal versuchen', retry]]); break;
@@ -560,7 +605,7 @@ document.querySelectorAll('.mode').forEach((b) => { b.onclick = () => setMode(b.
 function renderFiles() {
   const u = $('files'); u.replaceChildren();
   S.files.forEach((f, i) => {
-    const li = h('li', '', f.name);
+    const li = h('li', '', f.size ? `${f.name}, ${fmtSize(f.size)}` : f.name);
     const x = h('button', 'x'); x.type = 'button'; x.setAttribute('aria-label', f.name + ' entfernen');
     x.innerHTML = '<svg class="ic"><use href="#i-x"/></svg>';
     x.onclick = () => { S.files.splice(i, 1); renderFiles(); };
@@ -581,15 +626,19 @@ async function imageToB64(file) {
     return { mime: file.type || 'image/jpeg', data: await blobToB64(file) };
   }
 }
+const MAX_FILE = 2 * 1024 * 1024 * 1024; // Grenze der Gemini-Files-API
+const fmtSize = (n) => (n >= 1024 * 1024 * 1024 ? (n / 1024 / 1024 / 1024).toFixed(1).replace('.', ',') + ' GB' : n >= 1024 * 1024 ? Math.round(n / 1024 / 1024) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 $('file').onchange = async (e) => {
   for (const file of [...e.target.files]) {
     const name = file.name || 'Foto';
     try {
-      if (/^image\//.test(file.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(name)) S.files.push({ name, ...(await imageToB64(file)) });
-      else if (file.type === 'application/pdf' || /\.pdf$/i.test(name)) {
-        if (file.size > 15 * 1024 * 1024) { toast(`${name} ist zu groß (höchstens 15 MB)`); continue; }
-        S.files.push({ name, mime: 'application/pdf', data: await blobToB64(file) });
-      } else if (/^text\//.test(file.type) || /\.(txt|md|csv)$/i.test(name)) S.files.push({ name, text: await file.text() });
+      if (file.size > MAX_FILE) { toast(`${name} ist zu groß (höchstens 2 GB)`); continue; }
+      const isImg = /^image\//.test(file.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(name);
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(name);
+      if (isImg && file.size <= 25 * 1024 * 1024) S.files.push({ name, ...(await imageToB64(file)) });
+      else if (isImg || isPdf) S.files.push({ name, mime: isPdf ? 'application/pdf' : (file.type || 'image/jpeg'), blob: file, size: file.size, id: uid() });
+      else if (/^text\//.test(file.type) || /\.(txt|md|csv)$/i.test(name)) S.files.push({ name, text: await file.text() });
+      else if (/\.(pptx?|key|docx?)$/i.test(name)) toast(`${name}: bitte vorher als PDF speichern`);
       else toast(`${name}: bitte als PDF, Foto oder Textdatei anhängen`);
     } catch { toast(`${name} ließ sich nicht lesen`); }
   }
@@ -605,10 +654,17 @@ async function startLesson() {
   if (!text && !S.files.length) { toast('Schreib eine Frage oder häng eine Datei an.'); $('q').focus(); return; }
   const st = settings.get();
   if (!st.geminiKey && !st.groqKey) { S.pendingStart = true; openSetup(); return; }
+  if (!st.geminiKey && S.files.some((f) => f.data || f.blob)) { toast('Für Fotos und PDFs brauchst du einen Gemini-Schlüssel.'); openSettings(); return; }
   speaker.unlock();
-  const bin = S.files.filter((f) => f.data);
+  const big = S.files.filter((f) => f.blob);
+  const bin = S.files.filter((f) => f.data || f.blob);
   const texts = S.files.filter((f) => f.text != null);
-  const first = firstMessage({ mode: S.mode, text, texts, files: bin.map(({ name, mime, data }) => ({ name, mime, data })) });
+  const first = firstMessage({ mode: S.mode, text, texts, files: bin.map(({ name, mime, data, id, size }) => (data ? { name, mime, data } : { name, mime, id, size })) });
+  const cache = new Map(big.map((f) => [f.id, f.blob]));
+  for (const f of big) {
+    try { await blobs.put(f.id, f.blob); }
+    catch { toast(`${f.name} passt nicht in den Gerätespeicher. Nach 2 Tagen müsstest du sie neu anhängen.`); }
+  }
   const lesson = {
     id: uid(), created: Date.now(), mode: S.mode,
     title: text ? shortTitle(text) : 'Lektion zu ' + S.files[0].name,
@@ -619,6 +675,7 @@ async function startLesson() {
   $('q').value = ''; S.files = []; renderFiles();
   if (S.session) S.session.stop();
   const sess = new Session(lesson);
+  sess.blobCache = cache;
   S.session = sess;
   openLesson(sess, { fresh: true });
   history.pushState(null, '', '#/l/' + lesson.id);
@@ -706,9 +763,15 @@ $('lMenu').addEventListener('close', async () => {
   else if (v === 'settings') openSettings();
   else if (v === 'delete') {
     if (!confirm('Diese Lektion löschen?')) return;
-    s.stop(); await lessons.remove(s.l.id); S.session = null; location.hash = '#/'; toast('Lektion gelöscht');
+    s.stop(); await removeLesson(s.l); S.session = null; location.hash = '#/'; toast('Lektion gelöscht');
   }
 });
+
+async function removeLesson(l) {
+  const ids = (l.first?.files || []).map((f) => f.id).filter(Boolean);
+  if (ids.length) await blobs.remove(ids).catch(() => {});
+  await lessons.remove(l.id);
+}
 
 // ---------------- Listen ----------------
 function lessonItem(l, { del = false } = {}) {
@@ -723,7 +786,7 @@ function lessonItem(l, { del = false } = {}) {
     x.innerHTML = '<svg class="ic"><use href="#i-x"/></svg>';
     x.onclick = async () => {
       if (!confirm(`„${l.title}“ löschen?`)) return;
-      await lessons.remove(l.id);
+      await removeLesson(await lessons.get(l.id).catch(() => l) || l);
       if (S.session?.l.id === l.id) { S.session.stop(); S.session = null; }
       renderList();
     };
@@ -811,7 +874,7 @@ $('testKeys').onclick = async () => {
 $('wipe').onclick = async () => {
   if (!confirm('Wirklich alle Lektionen löschen? Das lässt sich nicht rückgängig machen.')) return;
   if (S.session) { S.session.stop(); S.session = null; }
-  await lessons.clear(); toast('Alle Lektionen gelöscht'); renderRecent();
+  await lessons.clear(); await blobs.clear().catch(() => {}); toast('Alle Lektionen gelöscht'); renderRecent();
 };
 
 // Ersteinrichtung
@@ -875,4 +938,5 @@ setMode('topic');
 if (!location.hash) history.replaceState(null, '', '#/');
 route();
 addEventListener('pagehide', () => { if (S.session) S.session.saveNow(); });
+if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__tutorSession = () => S.session; // nur für Tests
 document.addEventListener('visibilitychange', () => { if (document.hidden && S.session) S.session.saveNow(); });

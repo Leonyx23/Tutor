@@ -29,20 +29,21 @@ let dbp = null;
 function db() {
   if (dbp) return dbp;
   dbp = new Promise((res, rej) => {
-    const r = indexedDB.open('tutor', 1);
+    const r = indexedDB.open('tutor', 2);
     r.onupgradeneeded = () => {
       const d = r.result;
       if (!d.objectStoreNames.contains('lessons')) d.createObjectStore('lessons', { keyPath: 'id' }).createIndex('updated', 'updated');
+      if (!d.objectStoreNames.contains('blobs')) d.createObjectStore('blobs');
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   });
   return dbp;
 }
-function tx(mode, fn) {
+function tx(mode, fn, store = 'lessons') {
   return db().then((d) => new Promise((res, rej) => {
-    const t = d.transaction('lessons', mode);
-    const st = t.objectStore('lessons');
+    const t = d.transaction(store, mode);
+    const st = t.objectStore(store);
     let out;
     Promise.resolve(fn(st)).then((v) => { out = v; });
     t.oncomplete = () => res(out);
@@ -62,4 +63,12 @@ export const lessons = {
   },
   remove(id) { return tx('readwrite', (st) => req(st.delete(id))); },
   clear() { return tx('readwrite', (st) => req(st.clear())); },
+};
+
+// Originaldateien (z. B. große PDFs), damit sie nach Ablauf bei Google neu hochgeladen werden können
+export const blobs = {
+  put(id, blob) { return tx('readwrite', (st) => req(st.put(blob, id)), 'blobs'); },
+  get(id) { return tx('readonly', (st) => req(st.get(id)), 'blobs'); },
+  remove(ids) { return tx('readwrite', (st) => Promise.all([].concat(ids).map((id) => req(st.delete(id)))), 'blobs'); },
+  clear() { return tx('readwrite', (st) => req(st.clear()), 'blobs'); },
 };

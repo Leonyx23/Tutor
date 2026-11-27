@@ -2,6 +2,7 @@
 // Wählt das beste verfügbare Modell, merkt sich erschöpfte Modelle und wechselt automatisch.
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+const UPLOAD = 'https://generativelanguage.googleapis.com/upload/v1beta';
 const GROQ = 'https://api.groq.com/openai/v1';
 const DAY = 24 * 3600 * 1000;
 
@@ -58,6 +59,7 @@ async function readError(res) {
   return { status: res.status, apiStatus: String(e.status || e.code || ''), msg };
 }
 function classify({ status, apiStatus, msg }) {
+  if (/files\/[\w-]+|\bFile\b/.test(msg) && /not exist|permission|expired|not found|no longer|access/i.test(msg)) return 'file_gone';
   if (status === 429 || /RESOURCE_EXHAUSTED|rate.?limit|quota/i.test(apiStatus + ' ' + msg)) return 'quota';
   if (status === 401 || /api.?key|invalid.?key|unauthor/i.test(msg) || (status === 403 && /PERMISSION_DENIED/.test(apiStatus) && /key/i.test(msg))) return 'bad_key';
   if (status === 404 || /not found|not supported|is not available|does not exist|decommissioned|no longer/i.test(msg)) return 'unavailable';
@@ -90,6 +92,58 @@ async function readSSE(res, onData, signal) {
 }
 
 function keyTag(k) { let h = 0; for (const c of String(k)) h = (h * 31 + c.charCodeAt(0)) | 0; return String(h); }
+
+// ---------- Große Dateien: Gemini-Files-API (bis 2 GB, 48 Stunden gespeichert) ----------
+export function needsUpload(f, key, now = new Date()) {
+  if (f.data || f.text != null) return false;
+  if (!f.uri) return true;
+  if (f.keyTag !== keyTag(key)) return true;
+  if (f.expires && new Date(f.expires) - now < 15 * 60000) return true;
+  return false;
+}
+needsUpload.tag = keyTag;
+
+// Hochladen mit Fortschritt (XMLHttpRequest, weil fetch keinen Upload-Fortschritt meldet)
+function xhrPut(url, blob, headers, onProgress, signal) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', url);
+    for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v);
+    x.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    x.onload = () => resolve({ status: x.status, text: x.responseText });
+    x.onerror = () => reject(new TypeError('Netzwerkfehler beim Hochladen'));
+    x.onabort = () => reject(new TutorError('aborted', 'Abgebrochen'));
+    if (signal) signal.addEventListener('abort', () => x.abort(), { once: true });
+    x.send(blob);
+  });
+}
+
+export async function geminiUpload({ key, blob, mime, name, fetch = (...a) => globalThis.fetch(...a), put = xhrPut, onProgress, wait = 2000, signal }) {
+  const res = await fetch(`${UPLOAD}/files`, {
+    method: 'POST', signal,
+    headers: {
+      'x-goog-api-key': key, 'content-type': 'application/json',
+      'X-Goog-Upload-Protocol': 'resumable', 'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': String(blob.size), 'X-Goog-Upload-Header-Content-Type': mime,
+    },
+    body: JSON.stringify({ file: { display_name: String(name).slice(0, 120) } }),
+  });
+  if (!res.ok) { const info = await readError(res); throw new TutorError(classify(info), info.msg, { provider: 'gemini' }); }
+  const url = res.headers.get('x-goog-upload-url');
+  if (!url) throw new TutorError('upload_blocked', 'Upload-Adresse nicht lesbar');
+  const out = await put(url, blob, { 'X-Goog-Upload-Command': 'upload, finalize', 'X-Goog-Upload-Offset': '0' }, onProgress, signal);
+  if (!out || out.status < 200 || out.status >= 300) throw new TutorError(out && out.status === 413 ? 'too_big' : 'upload_failed', 'Hochladen fehlgeschlagen' + (out ? ` (${out.status})` : ''));
+  let file;
+  try { file = JSON.parse(out.text).file; } catch { file = null; }
+  if (!file || !file.uri) throw new TutorError('upload_failed', 'Unerwartete Antwort beim Hochladen');
+  for (let i = 0; file.state === 'PROCESSING' && i < 90; i++) {
+    await new Promise((r) => setTimeout(r, wait));
+    const r = await fetch(`${GEMINI}/${file.name}`, { headers: { 'x-goog-api-key': key }, signal });
+    if (r.ok) file = await r.json();
+  }
+  if (file.state === 'FAILED') throw new TutorError('upload_failed', 'Google konnte die Datei nicht verarbeiten');
+  return { uri: file.uri, fileName: file.name, mime: file.mimeType || mime, expires: file.expirationTime || null, keyTag: keyTag(key) };
+}
 
 // ---------- Router ----------
 export class Router {
@@ -133,7 +187,7 @@ export class Router {
   // opts: { system, messages:[{role:'user'|'assistant', text, files?}], maxTokens }
   async stream(opts, onText, signal) {
     const { messages } = opts;
-    const binary = messages.some((m) => (m.files || []).length);
+    const binary = messages.some((m) => (m.files || []).some((f) => f.data || f.uri));
     const order = ['gemini', 'groq'].filter((p) => this.keys[p]);
     if (!order.length) throw new TutorError('no_key', 'Kein Schlüssel eingetragen');
     const errors = [];
@@ -150,7 +204,7 @@ export class Router {
           await (provider === 'gemini' ? this.gemini(model, opts, onText, signal) : this.groq(model, opts, onText, signal));
           return { provider, model };
         } catch (e) {
-          if (e.code === 'aborted' || e.name === 'AbortError' || e.partial) throw e;
+          if (e.code === 'aborted' || e.name === 'AbortError' || e.partial || e.code === 'file_gone') throw e;
           e.provider = provider; e.model = model;
           errors.push(e);
           if (e.code === 'quota') this.block(model, provider === 'gemini' ? nextReset(this.now()) : new Date(+this.now() + (e.retryAfter || 60) * 1000));
@@ -168,7 +222,8 @@ export class Router {
   async gemini(model, { system, messages, maxTokens = 16384, temperature = 0.7 }, onText, signal) {
     const contents = messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.text || ' ' }, ...(m.files || []).map((f) => ({ inlineData: { mimeType: f.mime, data: f.data } }))],
+      parts: [{ text: m.text || ' ' }, ...(m.files || []).filter((f) => f.uri || f.data)
+        .map((f) => (f.uri ? { fileData: { mimeType: f.mime, fileUri: f.uri } } : { inlineData: { mimeType: f.mime, data: f.data } }))],
     }));
     const noThink = this.store.get('nothink.' + model);
     const gen = { temperature, maxOutputTokens: maxTokens };

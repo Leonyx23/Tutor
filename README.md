@@ -7,6 +7,8 @@ Stufen von **Google Gemini** und, als Reserve, **Groq**.
 ## Was er kann
 - **Thema**: erklärt ein Thema mit Skizzen, Abläufen und Gegenüberstellungen.
 - **Prüfung**: geht deine Unterlagen (Fotos, PDF, Text) durch, warnt vor typischen Fallen, Quiz am Ende.
+  Dateien bis 2 GB: große PDFs werden über die Gemini-Files-API hochgeladen (dort 48 Stunden gespeichert);
+  das Original bleibt auf dem Gerät und wird bei Bedarf automatisch neu hochgeladen.
 - **Hausaufgabe**: gibt Hinweise statt der fertigen Lösung und wartet auf deine Antwort.
 - Jederzeit dazwischenfragen (Text oder Sprache), „Anders erklären“, „Beispiel aus der Praxis“.
 - Vorlesen und Diktieren über die Sprachfunktionen des Browsers.

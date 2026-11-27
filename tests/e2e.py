@@ -191,6 +191,64 @@ try:
         check(not errs, f'Unterbrechung/Hausaufgabe: keine Seitenfehler {errs[:3]}')
         ctx.close()
 
+        # Große PDF (20 MB) über die Files-API, kleine PDF ohne lesbare Upload-Adresse direkt mitgeschickt
+        up = {"start": 0, "bytes": 0, "expose": True}
+        def handle_upload_start(route):
+            if route.request.method != 'POST': return route.fulfill(status=204)
+            up["start"] += 1
+            h = {'access-control-allow-origin': '*', 'content-type': 'application/json'}
+            if up["expose"]:
+                h['x-goog-upload-url'] = 'https://upload.mock/u1'
+                h['access-control-expose-headers'] = 'x-goog-upload-url'
+            route.fulfill(status=200, headers=h, body='{}')
+        def handle_upload_bytes(route):
+            if route.request.method != 'POST': return route.fulfill(status=204, headers={'access-control-allow-origin': '*', 'access-control-allow-headers': '*'})
+            up["bytes"] = len(route.request.post_data_buffer or b'')
+            route.fulfill(status=200, headers={'access-control-allow-origin': '*', 'content-type': 'application/json'},
+                          body=json.dumps({"file": {"name": "files/f1", "uri": "https://generativelanguage.googleapis.com/v1beta/files/f1", "mimeType": "application/pdf", "state": "ACTIVE", "expirationTime": "2099-01-01T00:00:00Z"}}))
+        ctx = b.new_context(viewport={'width': 390, 'height': 844})
+        page = ctx.new_page()
+        errs = []
+        page.on('pageerror', lambda e: errs.append(str(e)))
+        page.route('**/upload/v1beta/files**', handle_upload_start)
+        page.route('https://upload.mock/**', handle_upload_bytes)
+        page.route('**/generativelanguage.googleapis.com/v1beta/**', handle_gemini)
+        page.goto(BASE)
+        page.evaluate("localStorage.setItem('tutor.settings', JSON.stringify({geminiKey:'G', voice:false, rate:1.5, speed:2}))")
+        page.reload(); page.wait_for_timeout(600)
+        page.click('.mode[data-mode=exam]')
+        big = b'%PDF-1.4\n' + b'0' * (20 * 1024 * 1024)
+        page.set_input_files('#file', files=[{"name": "skript.pdf", "mimeType": "application/pdf", "buffer": big}])
+        page.wait_for_selector('#files li', timeout=5000)
+        check('20 MB' in page.inner_text('#files'), f'Große PDF wird angenommen ({page.inner_text("#files")})')
+        page.fill('#q', 'Herzzyklus'); page.click('#start')
+        page.wait_for_selector('.msg.tutor', timeout=30000)
+        last = calls["bodies"][-1]
+        check(up["start"] == 1 and up["bytes"] == len(big), f'PDF zu Google hochgeladen ({up["start"]}, {up["bytes"]} Bytes)')
+        check('"fileData":{"mimeType":"application/pdf","fileUri":"https://generativelanguage.googleapis.com/v1beta/files/f1"}' in last, 'Anfrage verweist auf die hochgeladene Datei')
+        check('inlineData' not in last, 'große PDF nicht direkt in der Anfrage')
+        page.wait_for_selector('.card.quiz', timeout=40000)
+        page.fill('#r', 'Was ist die Systole?'); page.press('#r', 'Enter')
+        page.wait_for_function("document.querySelectorAll('.msg.tutor').length >= 5", timeout=20000)
+        check(up["start"] == 1, 'Folgefrage lädt die Datei nicht nochmal hoch')
+        n_blobs = page.evaluate("""new Promise(r => { const q = indexedDB.open('tutor'); q.onsuccess = () => { const t = q.result.transaction('blobs').objectStore('blobs').count(); t.onsuccess = () => r(t.result); }; })""")
+        check(n_blobs == 1, f'Original-PDF auf dem Gerät gespeichert ({n_blobs})')
+        # nach 48 Stunden: Datei abgelaufen -> wird aus dem Gerätespeicher neu hochgeladen
+        page.evaluate("""(() => { const f = window.__tutorSession().l.first.files[0]; f.expires = '2000-01-01T00:00:00Z'; window.__tutorSession().blobCache.clear(); })()""")
+        page.fill('#r', 'Und die Diastole?'); page.press('#r', 'Enter')
+        page.wait_for_function("document.querySelectorAll('.msg.tutor').length >= 6", timeout=20000)
+        check(up["start"] == 2, f'Abgelaufene Datei aus dem Gerätespeicher neu hochgeladen ({up["start"]})')
+        # Plan B: Upload-Adresse nicht lesbar -> kleine PDF direkt mitschicken
+        up["expose"] = False
+        page.goto(BASE + '#/'); page.wait_for_timeout(400)
+        small = b'%PDF-1.4\n' + b'1' * (1024 * 1024)
+        page.set_input_files('#file', files=[{"name": "klein.pdf", "mimeType": "application/pdf", "buffer": small}])
+        page.fill('#q', 'Kurz'); page.click('#start')
+        page.wait_for_selector('.msg.tutor', timeout=30000)
+        check('"inlineData":{"mimeType":"application/pdf"' in calls["bodies"][-1], 'Plan B: kleine PDF direkt in der Anfrage')
+        check(not errs, f'Dateien: keine Seitenfehler {errs[:3]}')
+        ctx.close()
+
         # Fallback: Gemini erschöpft -> Groq
         mode["quota"] = True
         calls["gemini_stream"] = 0

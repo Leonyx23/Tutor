@@ -146,3 +146,93 @@ test('ungültiger Gemini-Schlüssel: weiter mit Groq; ohne Groq Fehler bad_key',
   const r = new Router({ keys: { gemini: 'falsch' }, fetch, store: memStore() });
   await assert.rejects(r.stream({ system: 'S', messages: [{ role: 'user', text: 'x' }] }, () => {}), (e) => e.code === 'bad_key' && e.provider === 'gemini');
 });
+
+// ---- große Dateien über die Gemini-Files-API ----
+import { geminiUpload, needsUpload } from '../js/providers.js';
+
+test('geminiUpload: Start-Anfrage, Hochladen an die Upload-Adresse, Ergebnis mit uri und Ablaufzeit', async () => {
+  const seen = [];
+  const fetch = async (url, opts = {}) => {
+    seen.push({ url: String(url), opts });
+    if (/upload\/v1beta\/files/.test(url)) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://up.example/abc' } });
+    return json(404, {});
+  };
+  let putCall;
+  const put = async (url, blob, headers, onProgress) => {
+    putCall = { url, headers, size: blob.size };
+    onProgress(0.5); onProgress(1);
+    return { status: 200, text: JSON.stringify({ file: { name: 'files/x1', uri: 'https://generativelanguage.googleapis.com/v1beta/files/x1', mimeType: 'application/pdf', state: 'ACTIVE', expirationTime: '2026-11-29T12:00:00Z' } }) };
+  };
+  const prog = [];
+  const blob = new Blob([new Uint8Array(1000)], { type: 'application/pdf' });
+  const f = await geminiUpload({ key: 'G', blob, mime: 'application/pdf', name: 'skript.pdf', fetch, put, onProgress: (p) => prog.push(p) });
+  assert.equal(seen[0].opts.headers['X-Goog-Upload-Protocol'], 'resumable');
+  assert.equal(seen[0].opts.headers['X-Goog-Upload-Command'], 'start');
+  assert.equal(seen[0].opts.headers['X-Goog-Upload-Header-Content-Length'], '1000');
+  assert.equal(seen[0].opts.headers['x-goog-api-key'], 'G');
+  assert.equal(putCall.url, 'https://up.example/abc');
+  assert.equal(putCall.headers['X-Goog-Upload-Command'], 'upload, finalize');
+  assert.deepEqual(prog, [0.5, 1]);
+  assert.equal(f.uri, 'https://generativelanguage.googleapis.com/v1beta/files/x1');
+  assert.equal(f.expires, '2026-11-29T12:00:00Z');
+  assert.equal(f.mime, 'application/pdf');
+});
+
+test('geminiUpload wartet, solange die Datei noch verarbeitet wird', async () => {
+  let polls = 0;
+  const fetch = async (url) => {
+    if (/upload\/v1beta\/files/.test(url)) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://up.example/abc' } });
+    if (/v1beta\/files\/x2/.test(url)) { polls++; return json(200, { name: 'files/x2', uri: 'u2', state: polls < 2 ? 'PROCESSING' : 'ACTIVE' }); }
+    return json(404, {});
+  };
+  const put = async () => ({ status: 200, text: JSON.stringify({ file: { name: 'files/x2', uri: 'u2', state: 'PROCESSING' } }) });
+  const f = await geminiUpload({ key: 'G', blob: new Blob(['x']), mime: 'application/pdf', name: 'a.pdf', fetch, put, wait: 0 });
+  assert.equal(polls, 2); assert.equal(f.uri, 'u2');
+});
+
+test('geminiUpload: ohne Upload-Adresse Fehler upload_blocked', async () => {
+  const fetch = async () => new Response('{}', { status: 200 });
+  await assert.rejects(geminiUpload({ key: 'G', blob: new Blob(['x']), mime: 'application/pdf', name: 'a.pdf', fetch, put: async () => ({}) }), (e) => e.code === 'upload_blocked');
+});
+
+test('geminiUpload: abgelehnter Schlüssel ergibt bad_key', async () => {
+  const fetch = async () => json(400, { error: { status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.' } });
+  await assert.rejects(geminiUpload({ key: 'X', blob: new Blob(['x']), mime: 'application/pdf', name: 'a.pdf', fetch, put: async () => ({}) }), (e) => e.code === 'bad_key');
+});
+
+test('needsUpload: neu, abgelaufen oder anderer Schlüssel', () => {
+  const now = new Date('2026-11-27T12:00:00Z');
+  assert.equal(needsUpload({ id: 'a' }, 'G', now), true);
+  assert.equal(needsUpload({ uri: 'u', expires: '2026-11-27T12:05:00Z', keyTag: needsUpload.tag('G') }, 'G', now), true);
+  assert.equal(needsUpload({ uri: 'u', expires: '2026-11-28T12:00:00Z', keyTag: needsUpload.tag('G') }, 'G', now), false);
+  assert.equal(needsUpload({ uri: 'u', expires: '2026-11-28T12:00:00Z', keyTag: needsUpload.tag('G') }, 'H', now), true);
+  assert.equal(needsUpload({ data: 'QUJD', mime: 'image/jpeg' }, 'G', now), false);
+});
+
+test('Gemini bekommt hochgeladene Dateien als fileData; Groq lehnt sie ab', async () => {
+  const fetch = mockFetch([
+    [/\/v1beta\/models\?/, () => json(200, GEMINI_LIST)],
+    [/streamGenerateContent/, () => sse([gem('x')])],
+    [/groq\.com\/openai\/v1\/models/, () => json(200, GROQ_LIST)],
+  ]);
+  const msg = { role: 'user', text: 'a', files: [{ name: 's.pdf', mime: 'application/pdf', uri: 'https://g/files/1' }] };
+  const r = new Router({ keys: { gemini: 'G' }, fetch, store: memStore() });
+  await r.stream({ system: 'S', messages: [msg] }, () => {});
+  const body = JSON.parse(fetch.calls.find((c) => /streamGenerateContent/.test(c.url)).opts.body);
+  assert.deepEqual(body.contents[0].parts[1], { fileData: { mimeType: 'application/pdf', fileUri: 'https://g/files/1' } });
+  const g = new Router({ keys: { groq: 'Q' }, fetch, store: memStore() });
+  await assert.rejects(g.stream({ system: 'S', messages: [msg] }, () => {}), (e) => e.code === 'needs_gemini');
+});
+
+test('abgelaufene Datei: Fehler file_gone, ohne die anderen Modelle zu sperren', async () => {
+  const store = memStore();
+  const fetch = mockFetch([
+    [/\/v1beta\/models\?/, () => json(200, GEMINI_LIST)],
+    [/streamGenerateContent/, () => json(403, { error: { code: 403, status: 'PERMISSION_DENIED', message: 'You do not have permission to access the File abc123 or it may not exist.' } })],
+  ]);
+  const r = new Router({ keys: { gemini: 'G' }, fetch, store });
+  const msg = { role: 'user', text: 'a', files: [{ name: 's.pdf', mime: 'application/pdf', uri: 'https://g/files/abc123' }] };
+  await assert.rejects(r.stream({ system: 'S', messages: [msg] }, () => {}), (e) => e.code === 'file_gone');
+  assert.equal(fetch.calls.filter((c) => /streamGenerateContent/.test(c.url)).length, 1);
+  assert.deepEqual(store.get('block') || {}, {});
+});
