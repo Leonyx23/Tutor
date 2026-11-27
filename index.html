@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>Tutor</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tutor">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#EDF0F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151A1B" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=Shantell+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12h14M12.5 6 18.5 12l-6 6"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M20 11.5 12.3 19.2a5 5 0 0 1-7-7L13 4.4a3.3 3.3 0 0 1 4.7 4.7l-7.6 7.6a1.7 1.7 0 0 1-2.4-2.4l7-7"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 24 24"><rect x="7" y="3.5" width="12" height="15" rx="1.5"/><path d="M4.5 7v12a1.5 1.5 0 0 0 1.5 1.5h9M10 8h6M10 11.5h6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+</svg>
+
+<main id="app">
+  <!-- ============ Start ============ -->
+  <section id="home" class="view">
+    <header class="top">
+      <span class="brand">Tutor</span>
+      <span class="spacer"></span>
+      <button id="toLessons" class="icon-btn" type="button" aria-label="Meine Lektionen" title="Meine Lektionen"><svg class="ic"><use href="#i-stack"/></svg></button>
+      <button id="toSettings" class="icon-btn" type="button" aria-label="Einstellungen" title="Einstellungen"><svg class="ic"><use href="#i-gear"/></svg></button>
+    </header>
+
+    <div class="sheet hero">
+      <svg id="heroInk" class="hero-ink" viewBox="0 0 800 150" role="img" aria-label="Wo hängst du fest?"></svg>
+      <p class="hero-sub">Frag einfach. Ich erkläre es dir Schritt für Schritt und zeichne dabei mit.</p>
+    </div>
+
+    <div class="modes" role="radiogroup" aria-label="Art der Lektion">
+      <button type="button" role="radio" class="mode" data-mode="topic" aria-checked="true"><b>Thema</b><span>Etwas Neues verstehen</span></button>
+      <button type="button" role="radio" class="mode" data-mode="exam" aria-checked="false"><b>Prüfung</b><span>Mit deinen Unterlagen wiederholen</span></button>
+      <button type="button" role="radio" class="mode" data-mode="homework" aria-checked="false"><b>Hausaufgabe</b><span>Hinweise statt fertiger Lösung</span></button>
+    </div>
+
+    <form id="ask" class="composer" autocomplete="off">
+      <label for="q" class="vh">Deine Frage</label>
+      <textarea id="q" rows="3" placeholder="Was möchtest du verstehen?"></textarea>
+      <ul id="files" class="files" aria-label="Angehängte Dateien"></ul>
+      <div class="composer-bar">
+        <label class="tool" for="file" title="Foto, PDF oder Textdatei anhängen"><svg class="ic"><use href="#i-clip"/></svg><span class="tl">Datei</span></label>
+        <input type="file" id="file" class="vh" multiple accept="image/*,application/pdf,.pdf,.txt,.md,text/plain,text/markdown">
+        <button type="button" id="micHome" class="tool" title="Diktieren" aria-label="Diktieren"><svg class="ic"><use href="#i-mic"/></svg><span class="tl">Sprechen</span></button>
+        <span class="spacer"></span>
+        <button type="submit" class="primary" id="start">Lektion starten</button>
+      </div>
+    </form>
+
+    <div class="examples">
+      <p class="muted">Zum Beispiel</p>
+      <div id="examples" class="chips"></div>
+    </div>
+
+    <section id="recentWrap" class="recent" hidden>
+      <h2>Zuletzt</h2>
+      <ul id="recent" class="lesson-list"></ul>
+      <button id="allLessons" type="button" class="link">Alle Lektionen ansehen</button>
+    </section>
+
+    <p class="foot muted">Der Tutor kann sich irren. Prüf Wichtiges mit Skript oder Atlas.</p>
+  </section>
+
+  <!-- ============ Lektion ============ -->
+  <section id="lesson" class="view" hidden>
+    <header class="top">
+      <button id="back" class="icon-btn" type="button" aria-label="Zur Startseite"><svg class="ic"><use href="#i-back"/></svg></button>
+      <h1 id="lTitle" class="ltitle">Neue Lektion</h1>
+      <button id="lMenuBtn" class="icon-btn" type="button" aria-label="Mehr"><svg class="ic"><use href="#i-more"/></svg></button>
+    </header>
+    <div class="stage">
+      <div class="board-wrap" id="boardWrap">
+        <div class="board-scroll" id="boardScroll"><div class="board" id="board"></div></div>
+        <div class="board-bar">
+          <button id="pgPrev" class="icon-btn sm" type="button" aria-label="Vorige Tafelseite"><svg class="ic"><use href="#i-back"/></svg></button>
+          <span id="pgInfo" class="pg">Seite 1</span>
+          <button id="pgNext" class="icon-btn sm" type="button" aria-label="Nächste Tafelseite"><svg class="ic"><use href="#i-next"/></svg></button>
+          <span class="spacer"></span>
+          <button id="zoomOut" class="icon-btn sm fs-only" type="button" aria-label="Verkleinern"><svg class="ic"><use href="#i-minus"/></svg></button>
+          <button id="zoomIn" class="icon-btn sm fs-only" type="button" aria-label="Vergrößern"><svg class="ic"><use href="#i-plus"/></svg></button>
+          <button id="fullscreen" class="icon-btn sm" type="button" aria-label="Tafel groß anzeigen"><svg class="ic"><use href="#i-expand"/></svg></button>
+        </div>
+        <div class="thinking" id="thinking" hidden><span class="pen" aria-hidden="true"></span><span id="thinkText">Ich überlege …</span></div>
+      </div>
+
+      <div class="side">
+        <div class="chips quick" id="quick">
+          <button type="button" class="chip" data-quick="retry">Anders erklären</button>
+          <button type="button" class="chip" data-quick="example">Beispiel aus der Praxis</button>
+          <button type="button" class="chip" data-quick="slower">Langsamer</button>
+        </div>
+        <ol class="transcript" id="transcript"></ol>
+        <form id="reply" class="reply" autocomplete="off">
+          <button type="button" id="playPause" class="icon-btn" aria-label="Anhalten"><svg class="ic"><use href="#i-pause"/></svg></button>
+          <label for="r" class="vh">Nachricht an den Tutor</label>
+          <input id="r" type="text" enterkeyhint="send" placeholder="Dazwischenfragen …">
+          <button type="button" id="micLesson" class="icon-btn" aria-label="Sprechen"><svg class="ic"><use href="#i-mic"/></svg></button>
+          <button type="submit" class="icon-btn send" aria-label="Senden"><svg class="ic"><use href="#i-send"/></svg></button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Meine Lektionen ============ -->
+  <section id="list" class="view" hidden>
+    <header class="top">
+      <button id="listBack" class="icon-btn" type="button" aria-label="Zur Startseite"><svg class="ic"><use href="#i-back"/></svg></button>
+      <h1 class="ltitle">Meine Lektionen</h1>
+      <span class="icon-btn" aria-hidden="true"></span>
+    </header>
+    <ul id="allList" class="lesson-list big"></ul>
+    <div id="listEmpty" class="empty" hidden>
+      <p>Hier landen deine Lektionen mit Tafelbild, Notizen und Quiz.</p>
+      <button type="button" class="primary" id="listNew">Erste Lektion starten</button>
+    </div>
+  </section>
+</main>
+
+<!-- ============ Einstellungen ============ -->
+<dialog id="settings" class="sheet-dialog" aria-labelledby="setTitle">
+  <form method="dialog" class="dlg">
+    <header class="dlg-head"><h2 id="setTitle">Einstellungen</h2><button class="icon-btn" value="close" aria-label="Schließen"><svg class="ic"><use href="#i-x"/></svg></button></header>
+
+    <fieldset>
+      <legend>KI-Schlüssel</legend>
+      <label class="field"><span>Gemini <span class="muted">(kostenlos, empfohlen)</span></span>
+        <span class="keyrow"><input id="sGemini" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…"><button type="button" class="eye" data-eye="sGemini">Zeigen</button></span>
+      </label>
+      <p class="hint">Holen unter <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. In der kostenlosen Stufe darf Google deine Eingaben zur Verbesserung seiner Dienste nutzen.</p>
+      <label class="field"><span>Groq <span class="muted">(kostenlos, springt ein, wenn Gemini nicht kann)</span></span>
+        <span class="keyrow"><input id="sGroq" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…"><button type="button" class="eye" data-eye="sGroq">Zeigen</button></span>
+      </label>
+      <p class="hint">Holen unter <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a>. Groq liest keine Fotos und PDFs.</p>
+      <button type="button" id="testKeys" class="secondary">Schlüssel prüfen</button>
+      <p id="keyResult" class="hint" role="status"></p>
+      <p class="hint">Die Schlüssel bleiben nur auf diesem Gerät.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Stimme und Tempo</legend>
+      <label class="switch"><input id="sVoice" type="checkbox"> Vorlesen</label>
+      <label class="field">Stimme <select id="sVoiceURI"><option value="">Automatisch</option></select></label>
+      <label class="field">Sprechtempo <input id="sRate" type="range" min="0.7" max="1.5" step="0.05"></label>
+      <label class="field">Zeichentempo <input id="sSpeed" type="range" min="0.6" max="2" step="0.1"></label>
+      <label class="switch"><input id="sAuto" type="checkbox"> Automatisch zum nächsten Schritt</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Erklärungen</legend>
+      <label class="field">Sprache <select id="sLang"></select></label>
+      <label class="field"><span>Über dich <span class="muted">(hilft dem Tutor, passend zu erklären)</span></span>
+        <textarea id="sAbout" rows="3"></textarea></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Darstellung</legend>
+      <div class="seg" role="radiogroup" aria-label="Darstellung">
+        <label><input type="radio" name="theme" value="auto"> Automatisch</label>
+        <label><input type="radio" name="theme" value="light"> Karopapier</label>
+        <label><input type="radio" name="theme" value="dark"> Schiefertafel</label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Daten</legend>
+      <button type="button" id="wipe" class="danger">Alle Lektionen löschen</button>
+    </fieldset>
+  </form>
+</dialog>
+
+<!-- ============ Einrichtung (erster Start) ============ -->
+<dialog id="setup" class="sheet-dialog" aria-labelledby="setupTitle">
+  <form class="dlg" id="setupForm">
+    <header class="dlg-head"><h2 id="setupTitle">Einmal einrichten</h2><button type="button" class="icon-btn" id="setupClose" aria-label="Schließen"><svg class="ic"><use href="#i-x"/></svg></button></header>
+    <p>Der Tutor nutzt Googles kostenloses Gemini. Dafür brauchst du einen eigenen Schlüssel. Das dauert zwei Minuten und kostet nichts.</p>
+    <ol class="steps">
+      <li>Öffne <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> und melde dich mit deinem Google-Konto an.</li>
+      <li>Tippe auf „API-Schlüssel erstellen“ und kopiere den Schlüssel.</li>
+      <li>Füge ihn hier ein.</li>
+    </ol>
+    <label class="field">Gemini-Schlüssel <input id="setupKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" required></label>
+    <p class="hint">Der Schlüssel bleibt nur auf diesem Gerät. Einen Groq-Schlüssel als Reserve kannst du später in den Einstellungen ergänzen.</p>
+    <p id="setupErr" class="err" role="alert"></p>
+    <button type="submit" class="primary wide" id="setupSave">Speichern und starten</button>
+  </form>
+</dialog>
+
+<!-- ============ Lektionsmenü ============ -->
+<dialog id="lMenu" class="sheet-dialog small" aria-label="Lektion">
+  <form method="dialog" class="dlg menu">
+    <button value="replay" type="submit">Von vorn abspielen</button>
+    <button value="notes" type="submit">Notizen kopieren</button>
+    <button value="settings" type="submit">Einstellungen</button>
+    <button value="delete" type="submit" class="danger-text">Lektion löschen</button>
+    <p id="lInfo" class="hint"></p>
+    <button value="close" type="submit" class="secondary">Schließen</button>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="js/app.js"></script>
+<script>if ('serviceWorker' in navigator && location.protocol === 'https:') addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));</script>
+</body>
+</html>
